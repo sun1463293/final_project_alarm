@@ -11,6 +11,10 @@ matplotlib.use("TkAgg")
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib.pyplot as plt
 
+# 解決 matplotlib 中文亂碼與負號顯示問題 (針對 macOS 優化)
+plt.rcParams['font.sans-serif'] = ['Heiti TC', 'Arial Unicode MS', 'PingFang HK', 'DejaVu Sans']
+plt.rcParams['axes.unicode_minus'] = False
+
 # 確保資料庫初始化
 database.initialize_db()
 
