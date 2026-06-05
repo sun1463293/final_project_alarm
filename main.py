@@ -633,7 +633,7 @@ class SmartLedgerApp(ctk.CTk):
         """建立並開啟一個自訂子視窗用於新增交易"""
         dialog = ctk.CTkToplevel(self)
         dialog.title("新增記帳明細")
-        dialog.geometry("380x420")
+        dialog.geometry("380x500")
         dialog.resizable(False, False)
         
         # 強制子視窗置頂
