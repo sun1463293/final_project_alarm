@@ -28,10 +28,10 @@ def run_tests():
     assert recent[0]['note'] == "牛肉麵", "取得最近交易資料損毀"
     
     # 5. 測試月份統計
-    summary = database.get_monthly_summary(2026, 6)
+    summary = database.get_monthly_summary(2099, 12)
     print(f"測試月份統計: 總收入 = {summary['total_income']}, 總支出 = {summary['total_expense']}, 結餘 = {summary['net_balance']}")
-    # 剛剛新增了一筆 150.0 的支出，且 initialize_db 會寫入一些當月範例資料（如果有寫的話，但因為可能不是 2026 6 月，我們檢查是否 >= 150）
-    assert summary['total_expense'] >= 150.0, "支出統計計算錯誤"
+    # 剛剛新增了一筆 150.0 的支出，我們檢查是否為 150.0
+    assert summary['total_expense'] == 150.0, "支出統計計算錯誤"
     
     # 6. 測試刪除交易
     database.delete_transaction(tx_id)

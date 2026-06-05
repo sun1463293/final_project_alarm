@@ -37,45 +37,17 @@ def initialize_db():
     
     conn.commit()
     
-    # 檢查是否已有資料，若無則插入範例資料與預算
-    cursor.execute("SELECT COUNT(*) FROM transactions")
-    count = cursor.fetchone()[0]
+    # 確保當月預算存在，若無則插入預設預算
+    now = datetime.now()
+    current_year = now.year
+    current_month = now.month
     
-    if count == 0:
-        # 插入預設當月預算
-        now = datetime.now()
-        current_year = now.year
-        current_month = now.month
-        
-        cursor.execute("""
-        INSERT OR IGNORE INTO budget (year, month, amount)
-        VALUES (?, ?, 10000.0)
-        """, (current_year, current_month))
-        
-        # 插入一些豐富的範例交易資料
-        sample_transactions = [
-            # 當月資料
-            (f"{current_year:04d}-{current_month:02d}-01", "income", "薪資", 8000.0, "工讀薪資"),
-            (f"{current_year:04d}-{current_month:02d}-02", "expense", "餐飲", 120.0, "早餐飯糰"),
-            (f"{current_year:04d}-{current_month:02d}-02", "expense", "交通", 50.0, "公車"),
-            (f"{current_year:04d}-{current_month:02d}-03", "expense", "餐飲", 250.0, "午餐火鍋"),
-            (f"{current_year:04d}-{current_month:02d}-05", "expense", "購物", 1200.0, "買新衣服"),
-            (f"{current_year:04d}-{current_month:02d}-08", "expense", "娛樂", 350.0, "看電影"),
-            (f"{current_year:04d}-{current_month:02d}-10", "expense", "學習", 600.0, "買程式設計參考書"),
-            (f"{current_year:04d}-{current_month:02d}-12", "income", "獎學金", 2000.0, "書卷獎學金"),
-            (f"{current_year:04d}-{current_month:02d}-15", "expense", "餐飲", 180.0, "晚餐便當"),
-            (f"{current_year:04d}-{current_month:02d}-20", "expense", "醫療", 200.0, "看感冒感冒藥"),
-            (f"{current_year:04d}-{current_month:02d}-25", "expense", "餐飲", 85.0, "下午茶珍珠奶茶"),
-        ]
-        
-        cursor.executemany("""
-        INSERT INTO transactions (date, type, category, amount, note)
-        VALUES (?, ?, ?, ?, ?)
-        """, sample_transactions)
-        
-        conn.commit()
-        print("資料庫初始化完成，已寫入預設範例資料。")
+    cursor.execute("""
+    INSERT OR IGNORE INTO budget (year, month, amount)
+    VALUES (?, ?, 10000.0)
+    """, (current_year, current_month))
     
+    conn.commit()
     conn.close()
 
 def add_transaction(date_str, tx_type, category, amount, note):
