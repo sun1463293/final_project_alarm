@@ -98,16 +98,7 @@ class SmartLedgerApp(ctk.CTk):
             anchor="w", height=40, command=lambda: self.show_page("settings")
         )
         self.nav_buttons["settings"].grid(row=4, column=0, padx=15, pady=5, sticky="ew")
-        
-        # 側欄底部資訊 (學號/作者)
-        self.info_label = ctk.CTkLabel(
-            self.sidebar_frame, 
-            text="環科一乙 孫廷沂\n學號: D1463293", 
-            font=ctk.CTkFont(size=11), 
-            text_color="gray"
-        )
-        self.info_label.grid(row=6, column=0, padx=20, pady=20, sticky="s")
-        
+
         # ---------------- 右側主內容區 (Content Container) ----------------
         self.content_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.content_frame.grid(row=0, column=1, sticky="nsew", padx=20, pady=20)
