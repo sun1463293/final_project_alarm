@@ -407,21 +407,29 @@ class SmartLedgerApp(ctk.CTk):
         self.pages["charts"] = page
         
         page.grid_columnconfigure(0, weight=1)
-        page.grid_rowconfigure(2, weight=1)
+        page.grid_rowconfigure(3, weight=1)
         
         # 標題
-        self.chart_title = ctk.CTkLabel(page, text="支出分析圖表", font=ctk.CTkFont(size=24, weight="bold"))
-        self.chart_title.grid(row=0, column=0, sticky="w", pady=(0, 15))
+        self.chart_title = ctk.CTkLabel(page, text="收支分析圖表", font=ctk.CTkFont(size=24, weight="bold"))
+        self.chart_title.grid(row=0, column=0, sticky="w", pady=(0, 10))
+        
+        # 收支切換按鈕
+        self.chart_type_selector = ctk.CTkSegmentedButton(
+            page, values=["支出分析", "收入分析"], font=ctk.CTkFont(size=13, weight="bold"),
+            command=self.on_chart_type_changed
+        )
+        self.chart_type_selector.grid(row=1, column=0, pady=(0, 15), sticky="ew")
+        self.chart_type_selector.set("支出分析")
         
         # 用於放置 Matplotlib Canvas 的容器
         self.chart_container = ctk.CTkFrame(page, fg_color="#1e293b", corner_radius=10)
-        self.chart_container.grid(row=1, column=0, sticky="nsew", pady=(0, 10))
+        self.chart_container.grid(row=2, column=0, sticky="nsew", pady=(0, 10))
         self.chart_container.grid_rowconfigure(0, weight=1)
         self.chart_container.grid_columnconfigure(0, weight=1)
         
         # 下半部類別排行
         self.rank_frame = ctk.CTkFrame(page, fg_color="#181818", corner_radius=8)
-        self.rank_frame.grid(row=2, column=0, sticky="nsew")
+        self.rank_frame.grid(row=3, column=0, sticky="nsew")
         self.rank_frame.grid_rowconfigure(1, weight=1)
         self.rank_frame.grid_columnconfigure(0, weight=1)
         
@@ -430,6 +438,9 @@ class SmartLedgerApp(ctk.CTk):
         
         self.rank_scroll = ctk.CTkScrollableFrame(self.rank_frame, fg_color="transparent", height=150)
         self.rank_scroll.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
+        
+    def on_chart_type_changed(self, value):
+        self.refresh_charts()
         
     def refresh_charts(self):
         """重新撈取數據，繪製並嵌入圓環圖"""
@@ -441,25 +452,41 @@ class SmartLedgerApp(ctk.CTk):
         for widget in self.rank_scroll.winfo_children():
             widget.destroy()
             
-        sum_data = database.get_monthly_summary(self.current_year, self.current_month)
-        categories = sum_data["category_expenses"]
+        is_expense = (self.chart_type_selector.get() == "支出分析")
         
-        # 如果無支出資料，顯示提示
-        if not categories or sum_data["total_expense"] == 0:
-            lbl_empty = ctk.CTkLabel(self.chart_container, text=f"📊 {self.current_year} 年 {self.current_month} 月查無支出資料，無法繪製圖表。", font=ctk.CTkFont(size=15), text_color="gray")
+        sum_data = database.get_monthly_summary(self.current_year, self.current_month)
+        if is_expense:
+            categories = sum_data["category_expenses"]
+            total_amt = sum_data["total_expense"]
+            type_text = "支出"
+        else:
+            categories = sum_data["category_incomes"]
+            total_amt = sum_data["total_income"]
+            type_text = "收入"
+            
+        # 更新排行榜標題
+        self.lbl_rank_title.configure(text=f"📋 分類{type_text}排行榜")
+        
+        # 如果無資料，顯示提示
+        if not categories or total_amt == 0:
+            lbl_empty = ctk.CTkLabel(self.chart_container, text=f"📊 {self.current_year} 年 {self.current_month} 月查無{type_text}資料，無法繪製圖表。", font=ctk.CTkFont(size=15), text_color="gray")
             lbl_empty.pack(pady=100)
             
-            lbl_no_rank = ctk.CTkLabel(self.rank_scroll, text="目前尚無分類支出統計。", font=ctk.CTkFont(size=13), text_color="gray")
+            lbl_no_rank = ctk.CTkLabel(self.rank_scroll, text=f"目前尚無分類{type_text}統計。", font=ctk.CTkFont(size=13), text_color="gray")
             lbl_no_rank.pack(pady=20)
             return
             
         # 1. 繪製 Matplotlib 圓環圖
         # 設定顏色主題 (配合 UI 風格)
-        colors = ['#f43f5e', '#38bdf8', '#fbbf24', '#a78bfa', '#10b981', '#f97316', '#64748b']
+        if is_expense:
+            # 支出用偏橘紅暖色系
+            colors = ['#f43f5e', '#fbbf24', '#f97316', '#a78bfa', '#38bdf8', '#10b981', '#64748b']
+        else:
+            # 收入用偏綠藍冷色系
+            colors = ['#10b981', '#38bdf8', '#00b4d8', '#a78bfa', '#fbbf24', '#f97316', '#64748b']
         
         labels = [cat[0] for cat in categories]
         sizes = [cat[1] for cat in categories]
-        total_exp = sum_data["total_expense"]
         
         # 建立 Figure (設定深色背景，與 GUI 無縫貼合)
         fig, ax = plt.subplots(figsize=(6, 3.2), facecolor='#1e293b')
@@ -489,7 +516,7 @@ class SmartLedgerApp(ctk.CTk):
         
         # 2. 顯示分類排行榜
         for i, (cat_name, amount) in enumerate(categories):
-            percent = (amount / total_exp) * 100
+            percent = (amount / total_amt) * 100
             
             row_frame = ctk.CTkFrame(self.rank_scroll, fg_color="#242424", height=36, corner_radius=4)
             row_frame.pack(fill="x", pady=2, padx=5)

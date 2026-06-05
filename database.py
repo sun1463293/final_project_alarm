@@ -102,13 +102,23 @@ def get_monthly_summary(year, month):
     """, (month_str + '%',))
     category_expenses = cursor.fetchall()
     
+    # 分類收入匯總
+    cursor.execute("""
+    SELECT category, SUM(amount) FROM transactions 
+    WHERE date LIKE ? AND type = 'income'
+    GROUP BY category
+    ORDER BY SUM(amount) DESC
+    """, (month_str + '%',))
+    category_incomes = cursor.fetchall()
+    
     conn.close()
     
     return {
         "total_income": total_income,
         "total_expense": total_expense,
         "net_balance": total_income - total_expense,
-        "category_expenses": category_expenses
+        "category_expenses": category_expenses,
+        "category_incomes": category_incomes
     }
 
 def get_recent_transactions(limit=5):
