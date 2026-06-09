@@ -18,6 +18,195 @@ plt.rcParams['axes.unicode_minus'] = False
 # 確保資料庫初始化
 database.initialize_db()
 
+import wave
+import math
+import struct
+import sys
+import subprocess
+
+try:
+    import winsound
+    HAS_WINSOUND = True
+except ImportError:
+    HAS_WINSOUND = False
+
+def ensure_alarm_sound(filename="alarm.wav"):
+    """確保警報音效檔存在，若不存在則利用 wave & math 動態生成"""
+    if os.path.exists(filename):
+        return
+    
+    sample_rate = 22050  # 取樣率
+    duration = 3.0       # 3 秒
+    
+    try:
+        with wave.open(filename, 'w') as wav_file:
+            wav_file.setnchannels(1) # 單聲道
+            wav_file.setsampwidth(2) # 16-bit
+            wav_file.setframerate(sample_rate)
+            
+            num_samples = int(duration * sample_rate)
+            for i in range(num_samples):
+                t = float(i) / sample_rate
+                # 頻率在 600Hz 到 1200Hz 之間每秒震盪兩次 (2Hz)
+                freq = 900.0 + 300.0 * math.sin(2.0 * math.pi * 2.0 * t)
+                value = int(32767.0 * math.sin(2.0 * math.pi * freq * t))
+                data = struct.pack('<h', value)
+                wav_file.writeframesraw(data)
+    except Exception as e:
+        print(f"無法建立警報音效檔案: {e}")
+
+# 全局的警報音效播放行程
+_alarm_process = None
+
+def play_alarm():
+    """播放警報音效"""
+    global _alarm_process
+    ensure_alarm_sound()
+    if HAS_WINSOUND:
+        try:
+            winsound.PlaySound("alarm.wav", winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_LOOP)
+        except Exception as e:
+            print(f"Windows 音效播放錯誤: {e}")
+    else:
+        try:
+            if sys.platform == "darwin": # macOS
+                _alarm_process = subprocess.Popen(["afplay", "alarm.wav"])
+            elif sys.platform.startswith("linux"): # Linux
+                _alarm_process = subprocess.Popen(["aplay", "alarm.wav"])
+        except Exception as e:
+            print(f"跨平台音效播放錯誤: {e}")
+
+def stop_alarm():
+    """停止播放警報音效"""
+    global _alarm_process
+    if HAS_WINSOUND:
+        try:
+            winsound.PlaySound(None, winsound.SND_PURGE)
+        except Exception as e:
+            print(f"Windows 停止音效錯誤: {e}")
+    else:
+        if _alarm_process is not None:
+            try:
+                _alarm_process.terminate()
+                _alarm_process = None
+            except Exception:
+                pass
+
+class BudgetWarningDialog(ctk.CTkToplevel):
+    def __init__(self, parent, budget, current_expense, year, month):
+        super().__init__(parent)
+        self.title("⚠️ 預算警戒通知")
+        self.geometry("400x260")
+        self.resizable(False, False)
+        
+        # 強制置頂並鎖定焦點
+        self.attributes("-topmost", True)
+        self.grab_set()
+        
+        self.configure(fg_color="#1e1e1e")
+        
+        # 標題
+        self.lbl_title = ctk.CTkLabel(
+            self, text="⚠️ 預算使用率已達 80%！", 
+            font=ctk.CTkFont(size=18, weight="bold"), 
+            text_color="#f59e0b"
+        )
+        self.lbl_title.pack(pady=(25, 15))
+        
+        # 資訊容器
+        details_frame = ctk.CTkFrame(self, fg_color="#2b2b2b", corner_radius=8)
+        details_frame.pack(fill="x", padx=30, pady=5)
+        
+        # 顯示數值
+        lbl_info = ctk.CTkLabel(
+            details_frame, 
+            text=f"您在 {year} 年 {month} 月的總支出已達：\n$ {current_expense:,.1f} 元\n\n設定之月預算上限為：\n$ {budget:,.1f} 元", 
+            font=ctk.CTkFont(size=14),
+            justify="center"
+        )
+        lbl_info.pack(pady=15, padx=20)
+        
+        # 關閉按鈕
+        self.btn_ok = ctk.CTkButton(
+            self, text="我知道了", 
+            fg_color="#f59e0b", hover_color="#d97706",
+            text_color="#181818", font=ctk.CTkFont(size=13, weight="bold"),
+            command=self.destroy
+        )
+        self.btn_ok.pack(pady=(15, 20))
+
+class BudgetAlarmDialog(ctk.CTkToplevel):
+    def __init__(self, parent, budget, current_expense, year, month):
+        super().__init__(parent)
+        self.title("🚨 預算超支警報 🚨")
+        self.geometry("420x320")
+        self.resizable(False, False)
+        
+        # 強制置頂並鎖定焦點
+        self.attributes("-topmost", True)
+        self.grab_set()
+        
+        self.configure(fg_color="#241415")
+        
+        # 警報標題
+        self.lbl_title = ctk.CTkLabel(
+            self, text="🚨 預算超支暴走中 🚨", 
+            font=ctk.CTkFont(size=22, weight="bold"), 
+            text_color="#ef4444"
+        )
+        self.lbl_title.pack(pady=(25, 15))
+        
+        # 資訊容器
+        details_frame = ctk.CTkFrame(self, fg_color="#3b1d20", corner_radius=8)
+        details_frame.pack(fill="x", padx=30, pady=5)
+        
+        exceeded = current_expense - budget
+        lbl_info = ctk.CTkLabel(
+            details_frame, 
+            text=f"【預算防線崩潰】\n您在 {year} 年 {month} 月的總支出已達：\n$ {current_expense:,.1f} 元\n\n已超出預算上限：$ {exceeded:,.1f} 元！\n(設定預算：$ {budget:,.1f} 元)", 
+            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color="#fca5a5",
+            justify="center"
+        )
+        lbl_info.pack(pady=15, padx=20)
+        
+        # 播放警報音效
+        play_alarm()
+        
+        # 啟動閃爍特效
+        self.flash_state = True
+        self.flash_title()
+        
+        # 關閉按鈕
+        self.btn_close = ctk.CTkButton(
+            self, text="關閉警報 (確認並返回)", 
+            fg_color="#ef4444", hover_color="#dc2626",
+            text_color="white", font=ctk.CTkFont(size=14, weight="bold"),
+            command=self.close_dialog
+        )
+        self.btn_close.pack(pady=(20, 20))
+        
+        # 監聽關閉視窗事件
+        self.protocol("WM_DELETE_WINDOW", self.close_dialog)
+        
+    def flash_title(self):
+        try:
+            if self.winfo_exists():
+                if self.flash_state:
+                    self.lbl_title.configure(text_color="#ef4444")
+                    self.configure(fg_color="#241415")
+                else:
+                    self.lbl_title.configure(text_color="#fca5a5")
+                    self.configure(fg_color="#181818")
+                self.flash_state = not self.flash_state
+                self.after(500, self.flash_title)
+        except Exception:
+            pass
+            
+    def close_dialog(self):
+        stop_alarm()
+        self.destroy()
+
 class SmartLedgerApp(ctk.CTk):
     def __init__(self):
         super().__init__()
@@ -745,35 +934,34 @@ class SmartLedgerApp(ctk.CTk):
             except ValueError:
                 messagebox.showerror("格式錯誤", "金額必須是比 0 大的有效數字！", parent=dialog)
                 return
-                
-            # 寫入資料庫
+            
+            # 新增至資料庫
             database.add_transaction(date_val, type_val, category_val, amount_val, note_val)
             
-            # 如果是支出，則比對是否超出預算，觸發超支警告
+            # 關閉對話框並更新主介面
+            dialog.destroy()
+            self.refresh_dashboard()
+            self.refresh_history()
+            self.refresh_charts()
+            
+            # 如果是支出，則比對是否超出預算，觸發超支/警戒警告
             if type_val == "expense":
                 try:
                     dt = datetime.strptime(date_val, "%Y-%m-%d")
                     tx_year, tx_month = dt.year, dt.month
                     
                     budget = database.get_monthly_budget(tx_year, tx_month)
-                    summary = database.get_monthly_summary(tx_year, tx_month)
-                    
-                    if summary["total_expense"] > budget:
-                        messagebox.showwarning(
-                            "⚠️ 超支警告", 
-                            f"【財務警戒】您在 {tx_year} 年 {tx_month} 月的總支出已達 $ {summary['total_expense']:,.1f} 元，"
-                            f"超出了設定的預算上限 $ {budget:,.1f} 元！\n\n請適度調整消費，開源節流。",
-                            parent=dialog
-                        )
-                except Exception:
-                    pass
-            
-            # 關閉並更新
-            dialog.destroy()
-            self.refresh_dashboard()
-            self.refresh_history()
-            self.refresh_charts()
-            
+                    if budget > 0:
+                        summary = database.get_monthly_summary(tx_year, tx_month)
+                        total_expense = summary["total_expense"]
+                        ratio = total_expense / budget
+                        
+                        if ratio >= 1.0:
+                            BudgetAlarmDialog(self, budget, total_expense, tx_year, tx_month)
+                        elif ratio >= 0.8:
+                            BudgetWarningDialog(self, budget, total_expense, tx_year, tx_month)
+                except Exception as e:
+                    print(f"檢查預算時發生錯誤: {e}")
         btn_cancel = ctk.CTkButton(dialog, text="取消", fg_color="gray", height=32, command=dialog.destroy)
         btn_cancel.grid(row=10, column=0, padx=(20, 5), pady=10, sticky="ew")
         
