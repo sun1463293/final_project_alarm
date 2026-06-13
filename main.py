@@ -11,8 +11,17 @@ matplotlib.use("TkAgg")
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib.pyplot as plt
 
-# 解決 matplotlib 中文亂碼與負號顯示問題 (針對 macOS 優化)
-plt.rcParams['font.sans-serif'] = ['Heiti TC', 'Arial Unicode MS', 'PingFang HK', 'DejaVu Sans']
+# 解決 matplotlib 中文亂碼與負號顯示問題 (支援 Windows, macOS, Linux)
+plt.rcParams['font.sans-serif'] = [
+    'Microsoft JhengHei',  # Windows 繁體中文 (微軟正黑體)
+    'Microsoft YaHei',    # Windows 簡體中文 (微軟雅黑)
+    'SimHei',             # Windows 黑體
+    'Heiti TC',           # macOS 繁體黑體
+    'Arial Unicode MS',   # 跨平台通用中文
+    'PingFang HK',        # macOS/iOS
+    'DejaVu Sans',        # Linux/通用 fallback
+    'sans-serif'
+]
 plt.rcParams['axes.unicode_minus'] = False
 
 # 確保資料庫初始化
@@ -794,11 +803,11 @@ class SmartLedgerApp(ctk.CTk):
         
         # 設定中間的圓孔 (毛玻璃/背景色)
         centre_circle = plt.Circle((0,0), 0.50, fc='#1e293b')
-        fig.gca().add_artist(centre_circle)
+        ax.add_artist(centre_circle)
         
         # 等比圓形
         ax.axis('equal')  
-        plt.tight_layout()
+        fig.tight_layout()
         
         # 將 matplotlib 嵌入 Tkinter Canvas
         canvas = FigureCanvasTkAgg(fig, master=self.chart_container)
