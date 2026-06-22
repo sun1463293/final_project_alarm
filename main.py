@@ -11,8 +11,17 @@ matplotlib.use("TkAgg")
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib.pyplot as plt
 
-# 解決 matplotlib 中文亂碼與負號顯示問題 (針對 macOS 優化)
-plt.rcParams['font.sans-serif'] = ['Heiti TC', 'Arial Unicode MS', 'PingFang HK', 'DejaVu Sans']
+# 解決 matplotlib 中文亂碼與負號顯示問題 (支援 Windows, macOS, Linux)
+plt.rcParams['font.sans-serif'] = [
+    'Microsoft JhengHei',  # Windows 繁體中文 (微軟正黑體)
+    'Microsoft YaHei',    # Windows 簡體中文 (微軟雅黑)
+    'SimHei',             # Windows 黑體
+    'Heiti TC',           # macOS 繁體黑體
+    'Arial Unicode MS',   # 跨平台通用中文
+    'PingFang HK',        # macOS/iOS
+    'DejaVu Sans',        # Linux/通用 fallback
+    'sans-serif'
+]
 plt.rcParams['axes.unicode_minus'] = False
 
 # 確保資料庫初始化
@@ -224,6 +233,17 @@ class SmartLedgerApp(ctk.CTk):
         self.current_month = datetime.now().month
         self.active_tab = "dashboard"
         
+        # 帳本管理變數
+        self.current_ledger_id = 1
+        self.current_ledger_name = "預設帳本"
+        self.current_ledger_token = "DEFAULT"
+        
+        # 記帳人暱稱（可在設定頁修改，新增交易時自動帶入）
+        self.current_user_name = "我"
+        
+        # 同步輪詢：記錄最後已知的資料庫版本號，-1 代表未初始化
+        self._last_known_version = -1
+        
         # 自訂主題色彩定義 (莫蘭迪色調、霓虹色)
         self.themes = {
             "Classic Dark": {"primary": "#1f538d", "secondary": "#2b2b2b", "bg": "#1e1e1e", "accent": "#3a7ebf"},
@@ -287,6 +307,28 @@ class SmartLedgerApp(ctk.CTk):
             anchor="w", height=40, command=lambda: self.show_page("settings")
         )
         self.nav_buttons["settings"].grid(row=4, column=0, padx=15, pady=5, sticky="ew")
+        
+        # ---------------- 側欄底部：帳本名稱 & 同步狀態指示 ----------------
+        self.sidebar_frame.grid_rowconfigure(5, weight=1)  # 自動擐開空間
+        
+        sync_status_frame = ctk.CTkFrame(self.sidebar_frame, fg_color="#121212", corner_radius=8)
+        sync_status_frame.grid(row=6, column=0, padx=10, pady=(0, 15), sticky="ew")
+        
+        self.lbl_sync_ledger = ctk.CTkLabel(
+            sync_status_frame,
+            text="📒 預設帳本",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color="#38bdf8"
+        )
+        self.lbl_sync_ledger.pack(anchor="w", padx=10, pady=(8, 2))
+        
+        self.lbl_sync_status = ctk.CTkLabel(
+            sync_status_frame,
+            text="🔄 同步中...",
+            font=ctk.CTkFont(size=10),
+            text_color="gray"
+        )
+        self.lbl_sync_status.pack(anchor="w", padx=10, pady=(0, 8))
 
         # ---------------- 右側主內容區 (Content Container) ----------------
         self.content_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -300,6 +342,9 @@ class SmartLedgerApp(ctk.CTk):
         self.init_history_page()
         self.init_charts_page()
         self.init_settings_page()
+        
+        # 啟動同步輪詢
+        self.start_sync_polling()
         
     def show_page(self, page_name):
         """切換至指定分頁並刷新資料"""
@@ -328,6 +373,56 @@ class SmartLedgerApp(ctk.CTk):
             self.refresh_charts()
         elif page_name == "settings":
             self.refresh_settings()
+
+    # ==========================================
+    # 即時同步輪詢 (Real-time Sync Polling)
+    # ==========================================
+    def start_sync_polling(self):
+        """啟動定期同步輪詢，每 3 秒比對一次 DB 版本號"""
+        self._sync_check()
+
+    def _sync_check(self):
+        """讀取 DB 版本號，若與已知版本不同則自動刷新 UI"""
+        try:
+            current_version = database.get_db_version()
+            
+            if current_version != self._last_known_version:
+                if self._last_known_version != -1:
+                    # 版本已變更（非初次載入），刷新目前分頁
+                    if self.active_tab == "dashboard":
+                        self.refresh_dashboard()
+                    elif self.active_tab == "history":
+                        self.refresh_history()
+                    elif self.active_tab == "charts":
+                        self.refresh_charts()
+                    elif self.active_tab == "settings":
+                        self.refresh_settings()
+                    
+                    # 短暫閃爍綠色表示已同步
+                    self.lbl_sync_status.configure(
+                        text=f"✅ 已同步  {datetime.now().strftime('%H:%M:%S')}",
+                        text_color="#10b981"
+                    )
+                    # 1.5 秒後恢復為灰色靜止狀態
+                    self.after(1500, lambda: self.lbl_sync_status.configure(
+                        text=f"🔄 監聽中  v{current_version}",
+                        text_color="gray"
+                    ))
+                else:
+                    # 初次啟動：靜默載入版本號
+                    self.lbl_sync_status.configure(
+                        text=f"🔄 監聽中  v{current_version}",
+                        text_color="gray"
+                    )
+                
+                self._last_known_version = current_version
+                
+        except Exception as e:
+            # DB 不可存取時（如共享檔案暫時鎖定），靜默忽略本次輪詢
+            self.lbl_sync_status.configure(text="⚠️ 連線中斷", text_color="#f59e0b")
+        
+        # 3 秒後再次輪詢（使用 tkinter.after，完全主執行緒安全）
+        self.after(3000, self._sync_check)
 
     # ==========================================
     # 儀表板首頁 (Dashboard Page)
@@ -409,7 +504,7 @@ class SmartLedgerApp(ctk.CTk):
         self.dash_date_label.configure(text=f"今天: {now.strftime('%Y/%m/%d')}")
         
         # 獲取統計摘要
-        sum_data = database.get_monthly_summary(self.current_year, self.current_month)
+        sum_data = database.get_monthly_summary(self.current_year, self.current_month, ledger_id=self.current_ledger_id)
         self.lbl_inc_val.configure(text=f"$ {sum_data['total_income']:,.1f}")
         self.lbl_exp_val.configure(text=f"$ {sum_data['total_expense']:,.1f}")
         
@@ -420,7 +515,7 @@ class SmartLedgerApp(ctk.CTk):
             self.lbl_bal_val.configure(text=f"$ {net:,.1f}", text_color="#f43f5e")
             
         # 預算狀態計算
-        budget = database.get_monthly_budget(self.current_year, self.current_month)
+        budget = database.get_monthly_budget(self.current_year, self.current_month, ledger_id=self.current_ledger_id)
         expense = sum_data['total_expense']
         
         if budget > 0:
@@ -447,7 +542,7 @@ class SmartLedgerApp(ctk.CTk):
         for widget in self.recent_scroll.winfo_children():
             widget.destroy()
             
-        recent_txs = database.get_recent_transactions(limit=5)
+        recent_txs = database.get_recent_transactions(limit=5, ledger_id=self.current_ledger_id)
         
         if not recent_txs:
             lbl_empty = ctk.CTkLabel(self.recent_scroll, text="目前尚無記帳紀錄，趕快點擊右側按鈕記下第一筆吧！", font=ctk.CTkFont(size=13), text_color="gray")
@@ -468,6 +563,12 @@ class SmartLedgerApp(ctk.CTk):
                     anchor="w"
                 )
                 lbl_info.pack(side="left", padx=15)
+                
+                # 記帳人名稱
+                recorder_text = tx.get('recorder') or ''
+                if recorder_text:
+                    lbl_rec = ctk.CTkLabel(row_frame, text=f"👤{recorder_text}", font=ctk.CTkFont(size=11), text_color="#a78bfa", anchor="w")
+                    lbl_rec.pack(side="left", padx=(0, 4))
                 
                 # 備註說明
                 note_text = f"({tx['note']})" if tx['note'] else ""
@@ -541,7 +642,7 @@ class SmartLedgerApp(ctk.CTk):
         for widget in self.history_scroll.winfo_children():
             widget.destroy()
             
-        txs = database.get_all_transactions_for_month(self.current_year, self.current_month)
+        txs = database.get_all_transactions_for_month(self.current_year, self.current_month, ledger_id=self.current_ledger_id)
         
         if not txs:
             lbl_empty = ctk.CTkLabel(self.history_scroll, text="本月份查無任何交易明細。", font=ctk.CTkFont(size=13), text_color="gray")
@@ -561,6 +662,18 @@ class SmartLedgerApp(ctk.CTk):
                 type_indicator = "🟢 收入" if tx['type'] == 'income' else "🔴 支出"
                 lbl_cat = ctk.CTkLabel(card, text=f"{type_indicator} | {tx['category']}", font=ctk.CTkFont(size=13, weight="bold"), width=120, anchor="w")
                 lbl_cat.pack(side="left", padx=10)
+                
+                # 記帳人名稱
+                recorder_name = tx.get('recorder') or '未知'
+                lbl_recorder = ctk.CTkLabel(
+                    card,
+                    text=f"👤 {recorder_name}",
+                    font=ctk.CTkFont(size=11, weight="bold"),
+                    text_color="#a78bfa",
+                    width=75,
+                    anchor="w"
+                )
+                lbl_recorder.pack(side="left", padx=5)
                 
                 # 備註
                 lbl_note = ctk.CTkLabel(card, text=tx['note'] or "", font=ctk.CTkFont(size=12), text_color="lightgray", anchor="w")
@@ -643,7 +756,7 @@ class SmartLedgerApp(ctk.CTk):
             
         is_expense = (self.chart_type_selector.get() == "支出分析")
         
-        sum_data = database.get_monthly_summary(self.current_year, self.current_month)
+        sum_data = database.get_monthly_summary(self.current_year, self.current_month, ledger_id=self.current_ledger_id)
         if is_expense:
             categories = sum_data["category_expenses"]
             total_amt = sum_data["total_expense"]
@@ -690,11 +803,11 @@ class SmartLedgerApp(ctk.CTk):
         
         # 設定中間的圓孔 (毛玻璃/背景色)
         centre_circle = plt.Circle((0,0), 0.50, fc='#1e293b')
-        fig.gca().add_artist(centre_circle)
+        ax.add_artist(centre_circle)
         
         # 等比圓形
         ax.axis('equal')  
-        plt.tight_layout()
+        fig.tight_layout()
         
         # 將 matplotlib 嵌入 Tkinter Canvas
         canvas = FigureCanvasTkAgg(fig, master=self.chart_container)
@@ -734,6 +847,83 @@ class SmartLedgerApp(ctk.CTk):
         # 標題
         self.set_title = ctk.CTkLabel(page, text="系統設定與工具", font=ctk.CTkFont(size=24, weight="bold"))
         self.set_title.pack(anchor="w", pady=(0, 20))
+        
+        # 帳本管理設定卡片
+        self.ledger_card = ctk.CTkFrame(page, fg_color="#1e293b", corner_radius=10)
+        self.ledger_card.pack(fill="x", pady=8, padx=5)
+        
+        self.lbl_ledger_sec_title = ctk.CTkLabel(self.ledger_card, text="👥 多人共同記帳 / 帳本管理", font=ctk.CTkFont(size=14, weight="bold"))
+        self.lbl_ledger_sec_title.pack(anchor="w", padx=20, pady=(15, 5))
+        
+        self.ledger_info_frame = ctk.CTkFrame(self.ledger_card, fg_color="transparent")
+        self.ledger_info_frame.pack(fill="x", padx=20, pady=(5, 10))
+        
+        # 顯示目前帳本資訊
+        self.lbl_current_ledger_info = ctk.CTkLabel(
+            self.ledger_info_frame, 
+            text="目前帳本: 預設帳本 | 代碼 (Token): DEFAULT", 
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color="#38bdf8"
+        )
+        self.lbl_current_ledger_info.pack(side="left", padx=(0, 20))
+        
+        # 帳本切換下拉選單
+        self.lbl_switch_ledger = ctk.CTkLabel(self.ledger_info_frame, text="切換帳本:", font=ctk.CTkFont(size=13))
+        self.lbl_switch_ledger.pack(side="left", padx=(10, 5))
+        
+        self.opt_switch_ledger = ctk.CTkOptionMenu(
+            self.ledger_info_frame, values=["預設帳本 (DEFAULT)"], width=180,
+            command=self.on_switch_ledger_changed
+        )
+        self.opt_switch_ledger.pack(side="left", padx=5)
+        
+        # 按鈕容器
+        self.ledger_btn_frame = ctk.CTkFrame(self.ledger_card, fg_color="transparent")
+        self.ledger_btn_frame.pack(fill="x", padx=20, pady=(0, 15))
+        
+        # 建立新帳本按鈕
+        self.btn_create_ledger = ctk.CTkButton(
+            self.ledger_btn_frame, text="➕ 建立新帳本", font=ctk.CTkFont(size=13, weight="bold"),
+            fg_color=self.current_theme["primary"], hover_color=self.current_theme["accent"],
+            width=120, command=self.open_create_ledger_dialog
+        )
+        self.btn_create_ledger.pack(side="left", padx=(0, 10))
+        
+        # 加入現有帳本按鈕
+        self.btn_join_ledger = ctk.CTkButton(
+            self.ledger_btn_frame, text="🔑 加入現有帳本 (輸入 Token)", font=ctk.CTkFont(size=13, weight="bold"),
+            fg_color="#a78bfa", hover_color="#8b5cf6",
+            width=180, command=self.open_join_ledger_dialog
+        )
+        self.btn_join_ledger.pack(side="left")
+        
+        # ── 記帳人暱稱設定卡片 ──
+        self.user_card = ctk.CTkFrame(page, fg_color="#1e293b", corner_radius=10)
+        self.user_card.pack(fill="x", pady=8, padx=5)
+        
+        self.lbl_user_title = ctk.CTkLabel(self.user_card, text="👤 我的記帳人暱稱", font=ctk.CTkFont(size=14, weight="bold"))
+        self.lbl_user_title.pack(anchor="w", padx=20, pady=(15, 5))
+        
+        user_input_frame = ctk.CTkFrame(self.user_card, fg_color="transparent")
+        user_input_frame.pack(fill="x", padx=20, pady=(0, 15))
+        
+        self.ent_user_name = ctk.CTkEntry(user_input_frame, placeholder_text="輸入暱稱 (如: 小明、Alice)", width=180)
+        self.ent_user_name.insert(0, self.current_user_name)
+        self.ent_user_name.pack(side="left", padx=(0, 10))
+        
+        self.btn_save_user = ctk.CTkButton(
+            user_input_frame, text="儲存暱稱",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            fg_color="#a78bfa", hover_color="#8b5cf6",
+            width=90, command=self.save_user_name
+        )
+        self.btn_save_user.pack(side="left")
+        
+        ctk.CTkLabel(
+            user_input_frame,
+            text="  ⚡ 新增交易時自動帶入此暱稱作為「記帳人」",
+            font=ctk.CTkFont(size=11), text_color="gray"
+        ).pack(side="left", padx=(10, 0))
         
         # 預算設定區卡片
         self.budget_set_card = ctk.CTkFrame(page, fg_color="#1e293b", corner_radius=10)
@@ -789,10 +979,131 @@ class SmartLedgerApp(ctk.CTk):
         self.btn_export.pack(side="left", padx=(0, 10))
         
     def refresh_settings(self):
-        """載入目前預算並更新設定頁面欄位"""
-        current_budget = database.get_monthly_budget(self.current_year, self.current_month)
+        """載入目前預算與帳本列表並更新設定頁面欄位"""
+        current_budget = database.get_monthly_budget(self.current_year, self.current_month, ledger_id=self.current_ledger_id)
         self.ent_budget.delete(0, 'end')
         self.ent_budget.insert(0, str(current_budget))
+        
+        # 更新目前帳本顯示
+        self.lbl_current_ledger_info.configure(
+            text=f"目前帳本: {self.current_ledger_name} | 代碼 (Token): {self.current_ledger_token}"
+        )
+        
+        # 載入所有帳本並更新下拉選單
+        ledgers = database.get_all_ledgers()
+        options = [f"{l['name']} ({l['token']})" for l in ledgers]
+        self.opt_switch_ledger.configure(values=options)
+        
+        current_opt = f"{self.current_ledger_name} ({self.current_ledger_token})"
+        if current_opt in options:
+            self.opt_switch_ledger.set(current_opt)
+        else:
+            self.opt_switch_ledger.set(options[0])
+            
+    def on_switch_ledger_changed(self, value):
+        """切換帳本時觸發"""
+        if "(" in value and value.endswith(")"):
+            token = value.split("(")[-1][:-1].strip()
+            ledger = database.get_ledger_by_token(token)
+            if ledger:
+                self.current_ledger_id = ledger["id"]
+                self.current_ledger_name = ledger["name"]
+                self.current_ledger_token = ledger["token"]
+                self.lbl_sync_ledger.configure(text=f"📒 {self.current_ledger_name}")
+                self.refresh_settings()
+                messagebox.showinfo("切換成功", f"已切換至帳本：{self.current_ledger_name}")
+
+    def open_create_ledger_dialog(self):
+        """開啟建立新帳本對話框"""
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("建立新帳本")
+        dialog.geometry("340x200")
+        dialog.resizable(False, False)
+        
+        # 強制置頂
+        dialog.attributes("-topmost", True)
+        dialog.grab_set()
+        
+        dialog.grid_columnconfigure((0, 1), weight=1)
+        
+        lbl_name = ctk.CTkLabel(dialog, text="帳本名稱:", font=ctk.CTkFont(size=13, weight="bold"))
+        lbl_name.grid(row=0, column=0, columnspan=2, padx=20, pady=(25, 5), sticky="w")
+        
+        ent_name = ctk.CTkEntry(dialog, placeholder_text="例如: 東京自由行、情侶存錢")
+        ent_name.grid(row=1, column=0, columnspan=2, padx=20, pady=(0, 20), sticky="ew")
+        
+        def save_and_close():
+            name = ent_name.get().strip()
+            if not name:
+                messagebox.showerror("錯誤", "帳本名稱不能為空！", parent=dialog)
+                return
+            
+            ledger = database.create_ledger(name)
+            self.current_ledger_id = ledger["id"]
+            self.current_ledger_name = ledger["name"]
+            self.current_ledger_token = ledger["token"]
+            self.lbl_sync_ledger.configure(text=f"📒 {self.current_ledger_name}")
+            
+            dialog.destroy()
+            self.refresh_settings()
+            messagebox.showinfo("建立成功", f"已成功建立新帳本！\n帳本名稱: {ledger['name']}\n代碼 (Token): {ledger['token']}\n\n您現在可以在系統中開始共同記帳，或將代碼分享給他人加入！")
+            
+        btn_cancel = ctk.CTkButton(dialog, text="取消", fg_color="gray", command=dialog.destroy)
+        btn_cancel.grid(row=2, column=0, padx=(20, 5), pady=10, sticky="ew")
+        
+        btn_submit = ctk.CTkButton(
+            dialog, text="建立", fg_color=self.current_theme["primary"], 
+            hover_color=self.current_theme["accent"], command=save_and_close
+        )
+        btn_submit.grid(row=2, column=1, padx=(5, 20), pady=10, sticky="ew")
+
+    def open_join_ledger_dialog(self):
+        """開啟加入現有帳本對話框"""
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("加入現有帳本")
+        dialog.geometry("340x200")
+        dialog.resizable(False, False)
+        
+        # 強制置頂
+        dialog.attributes("-topmost", True)
+        dialog.grab_set()
+        
+        dialog.grid_columnconfigure((0, 1), weight=1)
+        
+        lbl_token = ctk.CTkLabel(dialog, text="輸入帳本代碼 (Token):", font=ctk.CTkFont(size=13, weight="bold"))
+        lbl_token.grid(row=0, column=0, columnspan=2, padx=20, pady=(25, 5), sticky="w")
+        
+        ent_token = ctk.CTkEntry(dialog, placeholder_text="請輸入 8 碼帳本代碼")
+        ent_token.grid(row=1, column=0, columnspan=2, padx=20, pady=(0, 20), sticky="ew")
+        
+        def save_and_close():
+            token = ent_token.get().strip().upper()
+            if not token:
+                messagebox.showerror("錯誤", "代碼不能為空！", parent=dialog)
+                return
+            
+            ledger = database.join_ledger(token)
+            if not ledger:
+                messagebox.showerror("找不到帳本", "在此資料庫中找不到對應代碼的帳本，請確認輸入是否正確！", parent=dialog)
+                return
+            
+            self.current_ledger_id = ledger["id"]
+            self.current_ledger_name = ledger["name"]
+            self.current_ledger_token = ledger["token"]
+            self.lbl_sync_ledger.configure(text=f"📒 {self.current_ledger_name}")
+            
+            dialog.destroy()
+            self.refresh_settings()
+            messagebox.showinfo("加入成功", f"成功加入並切換至帳本：\n{ledger['name']} ({ledger['token']})")
+            
+        btn_cancel = ctk.CTkButton(dialog, text="取消", fg_color="gray", command=dialog.destroy)
+        btn_cancel.grid(row=2, column=0, padx=(20, 5), pady=10, sticky="ew")
+        
+        btn_submit = ctk.CTkButton(
+            dialog, text="加入", fg_color="#a78bfa", 
+            hover_color="#8b5cf6", command=save_and_close
+        )
+        btn_submit.grid(row=2, column=1, padx=(5, 20), pady=10, sticky="ew")
         
     def save_budget(self):
         """儲存預算上限到資料庫"""
@@ -801,7 +1112,7 @@ class SmartLedgerApp(ctk.CTk):
             val = float(val_str)
             if val < 0:
                 raise ValueError
-            database.set_monthly_budget(self.current_year, self.current_month, val)
+            database.set_monthly_budget(self.current_year, self.current_month, val, ledger_id=self.current_ledger_id)
             messagebox.showinfo("設定成功", f"已將本月預算成功設定為 $ {val:,.1f} 元。")
             self.refresh_settings()
         except ValueError:
@@ -816,13 +1127,24 @@ class SmartLedgerApp(ctk.CTk):
         self.configure(fg_color=self.current_theme["bg"])
         self.btn_add_tx.configure(fg_color=self.current_theme["primary"], hover_color=self.current_theme["accent"])
         self.btn_save_budget.configure(fg_color=self.current_theme["primary"], hover_color=self.current_theme["accent"])
+        self.btn_create_ledger.configure(fg_color=self.current_theme["primary"], hover_color=self.current_theme["accent"])
         
         # 刷新目前頁面樣式
         self.show_page(self.active_tab)
+    
+    def save_user_name(self):
+        """儲存使用者在設定頁輸入的記帳人暱稱"""
+        name = self.ent_user_name.get().strip()
+        if not name:
+            messagebox.showerror("格式錯誤", "暱稱不能為空！")
+            return
+        self.current_user_name = name
+        self.lbl_sync_ledger.configure(text=f"📒 {self.current_ledger_name}")
+        messagebox.showinfo("儲存成功", f"記帳人暱稱已設定為：{name}\n下次新增交易時將自動帶入。")
         
     def export_csv(self):
         """將目前月份的交易資料匯出為本地 CSV 檔案"""
-        txs = database.get_all_transactions_for_month(self.current_year, self.current_month)
+        txs = database.get_all_transactions_for_month(self.current_year, self.current_month, ledger_id=self.current_ledger_id)
         if not txs:
             messagebox.showwarning("無資料", "本月份尚無記帳資料，無法進行匯出。")
             return
@@ -832,11 +1154,11 @@ class SmartLedgerApp(ctk.CTk):
         try:
             with open(filename, 'w', encoding='utf-8-sig', newline='') as f:
                 writer = csv.writer(f)
-                # 寫入欄位標題
-                writer.writerow(["交易ID", "交易日期", "收支類型", "類別", "交易金額", "備註說明"])
+                # 寫入欄位標題（含記帳人）
+                writer.writerow(["交易ID", "交易日期", "收支類型", "類別", "交易金額", "備註說明", "記帳人"])
                 for tx in txs:
                     type_zh = "收入" if tx['type'] == 'income' else "支出"
-                    writer.writerow([tx['id'], tx['date'], type_zh, tx['category'], tx['amount'], tx['note']])
+                    writer.writerow([tx['id'], tx['date'], type_zh, tx['category'], tx['amount'], tx['note'], tx.get('recorder', '')])
             
             messagebox.showinfo("匯出成功", f"當月資料已成功匯出至同目錄下的：\n{filename}")
         except Exception as e:
@@ -849,7 +1171,7 @@ class SmartLedgerApp(ctk.CTk):
         """建立並開啟一個自訂子視窗用於新增交易"""
         dialog = ctk.CTkToplevel(self)
         dialog.title("新增記帳明細")
-        dialog.geometry("380x500")
+        dialog.geometry("380x570")
         dialog.resizable(False, False)
         
         # 強制子視窗置頂
@@ -908,9 +1230,17 @@ class SmartLedgerApp(ctk.CTk):
         lbl_note.grid(row=8, column=0, padx=20, pady=5, sticky="w")
         
         ent_note = ctk.CTkEntry(dialog, placeholder_text="寫些備忘 (選填)...")
-        ent_note.grid(row=9, column=0, columnspan=2, padx=20, pady=(0, 20), sticky="ew")
+        ent_note.grid(row=9, column=0, columnspan=2, padx=20, pady=(0, 15), sticky="ew")
         
-        # 6. 送出與取消按鈕
+        # 6. 記帳人欄
+        lbl_recorder = ctk.CTkLabel(dialog, text="👤 記帳人:", font=ctk.CTkFont(size=13, weight="bold"))
+        lbl_recorder.grid(row=10, column=0, padx=20, pady=5, sticky="w")
+        
+        ent_recorder = ctk.CTkEntry(dialog, placeholder_text="輸入記帳人暱稱")
+        ent_recorder.grid(row=11, column=0, columnspan=2, padx=20, pady=(0, 15), sticky="ew")
+        ent_recorder.insert(0, self.current_user_name)
+        
+        # 7. 送出與取消按鈕
         def save_and_close():
             date_val = ent_date.get().strip()
             type_zh = seg_type.get()
@@ -918,6 +1248,7 @@ class SmartLedgerApp(ctk.CTk):
             category_val = opt_category.get()
             amount_str = ent_amount.get().strip()
             note_val = ent_note.get().strip()
+            recorder_val = ent_recorder.get().strip() or self.current_user_name
             
             # 日期基本格式檢查
             try:
@@ -935,8 +1266,9 @@ class SmartLedgerApp(ctk.CTk):
                 messagebox.showerror("格式錯誤", "金額必須是比 0 大的有效數字！", parent=dialog)
                 return
             
-            # 新增至資料庫
-            database.add_transaction(date_val, type_val, category_val, amount_val, note_val)
+            # 新增至資料庫（含記帳人）
+            database.add_transaction(date_val, type_val, category_val, amount_val, note_val,
+                                     ledger_id=self.current_ledger_id, recorder=recorder_val)
             
             # 關閉對話框並更新主介面
             dialog.destroy()
@@ -950,9 +1282,9 @@ class SmartLedgerApp(ctk.CTk):
                     dt = datetime.strptime(date_val, "%Y-%m-%d")
                     tx_year, tx_month = dt.year, dt.month
                     
-                    budget = database.get_monthly_budget(tx_year, tx_month)
+                    budget = database.get_monthly_budget(tx_year, tx_month, ledger_id=self.current_ledger_id)
                     if budget > 0:
-                        summary = database.get_monthly_summary(tx_year, tx_month)
+                        summary = database.get_monthly_summary(tx_year, tx_month, ledger_id=self.current_ledger_id)
                         total_expense = summary["total_expense"]
                         ratio = total_expense / budget
                         
@@ -963,13 +1295,13 @@ class SmartLedgerApp(ctk.CTk):
                 except Exception as e:
                     print(f"檢查預算時發生錯誤: {e}")
         btn_cancel = ctk.CTkButton(dialog, text="取消", fg_color="gray", height=32, command=dialog.destroy)
-        btn_cancel.grid(row=10, column=0, padx=(20, 5), pady=10, sticky="ew")
+        btn_cancel.grid(row=12, column=0, padx=(20, 5), pady=10, sticky="ew")
         
         btn_submit = ctk.CTkButton(
             dialog, text="儲存", fg_color=self.current_theme["primary"], 
             hover_color=self.current_theme["accent"], height=32, command=save_and_close
         )
-        btn_submit.grid(row=10, column=1, padx=(5, 20), pady=10, sticky="ew")
+        btn_submit.grid(row=12, column=1, padx=(5, 20), pady=10, sticky="ew")
 
 if __name__ == "__main__":
     app = SmartLedgerApp()
